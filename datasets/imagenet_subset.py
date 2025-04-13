@@ -1,6 +1,7 @@
 # datasets/imagenet_subset.py
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from augmentation.transforms import SimCLRTransform, StandardTransform, BasicAugmentation
 import os

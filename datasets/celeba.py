@@ -1,6 +1,7 @@
 # datasets/celeba.py
 import torch
 from torch.utils.data import DataLoader
+from torchvision import transforms
 from torchvision.datasets import CelebA
 from augmentation.transforms import SimCLRTransform, StandardTransform, BasicAugmentation
 from PIL import Image

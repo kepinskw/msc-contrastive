@@ -1,6 +1,7 @@
 # datasets/cifar10.py
 import torch
 from torch.utils.data import DataLoader
+from torchvision import transforms
 from torchvision.datasets import CIFAR10
 from augmentation.transforms import SimCLRTransform, StandardTransform, BasicAugmentation
 from PIL import Image
