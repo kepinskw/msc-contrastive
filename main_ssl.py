@@ -11,9 +11,9 @@ import torch.optim as optim
 import torch.nn as nn
 # Importuj komponenty z projektu
 from datasets.cifar10 import get_cifar10_dataloader, get_cifar10_dataset
-from datasets.svhn import get_svhn_dataloader
-from datasets.celeba import get_celeba_dataloader
-from datasets.imagenet_subset import get_imagenet_subset_dataloader
+from datasets.svhn import get_svhn_dataloader, get_svhn_dataset
+from datasets.celeba import get_celeba_dataloader, get_celeba_dataset
+from datasets.imagenet_subset import get_imagenet_subset_dataloader, get_imagenet_subset_dataset
 from models.resnet_base import get_resnet_encoder
 from models.projection_head import ProjectionHead
 from methods.simclr import SimCLRNet
@@ -23,9 +23,7 @@ from losses.nt_xent import NTXentLoss
 from losses.contrastive import ContrastiveLoss
 from losses.triplet import TripletLoss
 
-from datasets.tripletdataset import TripletDataset  
 
-# (Opcjonalnie) Import logowania, np. TensorBoard
 from torch.utils.tensorboard import SummaryWriter
 
 # (Opcjonalnie) Import bardziej zaawansowanych optymalizatorów, np. LARS
@@ -115,12 +113,14 @@ def get_dataloader(args):
     """Pobiera odpowiedni DataLoader na podstawie argumentów."""
     # Transform mode zależy od metody
     if args.method == 'simclr':
-        transform_mode = 'simclr' # Potrzebuje dwóch widoków
+        transform_mode = 'simclr'
+    elif args.method == 'siamese':
+        transform_mode = 'siamese'
+    elif args.method == 'triplet':
+        transform_mode = 'triplet'
     else:
-        # Dla Siamese/Triplet - na razie użyjmy basic_augment.
-        # UWAGA: Generowanie par/tripletów nie jest tutaj zaimplementowane!
-        # To wymagałoby dodatkowej logiki w DataLoaderze lub w pętli treningowej.
-        transform_mode = 'basic_augment'
+        print(f"Ostrzeżenie: Nieznana metoda '{args.method}' w get_dataloader. Używam transform_mode='eval'.")
+        transform_mode = 'eval' # LUB 'basic_augment', zależy co tam było
 
     common_loader_args = {
         'batch_size': args.batch_size,
@@ -128,17 +128,16 @@ def get_dataloader(args):
         'transform_mode': transform_mode,
         'image_size': args.image_size
     }
+
     common_dataset_args = {
     'transform_mode': transform_mode,
     'image_size': args.image_size,
     'train': True,
     'download': True
     }
-    if args.dataset == 'cifar10':
-        base_train_dataset = get_cifar10_dataset(root=args.data_dir, **common_dataset_args)
 
+    if args.dataset == 'cifar10':
         train_loader = get_cifar10_dataloader(root=args.data_dir, train=True, **common_loader_args)
-        # Walidacja SSL zazwyczaj nie jest robiona, ale można dodać test loader do ew. wizualizacji
         test_loader = get_cifar10_dataloader(root=args.data_dir, train=False, transform_mode='eval', # Użyj eval transform dla test
                                              batch_size=args.batch_size, num_workers=args.num_workers, image_size=args.image_size)
     elif args.dataset == 'svhn':
@@ -146,34 +145,22 @@ def get_dataloader(args):
         test_loader = get_svhn_dataloader(root=args.data_dir, split='test', transform_mode='eval',
                                             batch_size=args.batch_size, num_workers=args.num_workers, image_size=args.image_size)
     elif args.dataset == 'celeba':
-        # Upewnij się, że CelebA jest pobrany i ścieżka jest poprawna
-        train_loader = get_celeba_dataloader(root=args.data_dir, split='train', target_type='identity', # Użyjmy identity do ew. tworzenia par
+        train_loader = get_celeba_dataloader(root=args.data_dir, train=True, target_type='identity', # Użyjmy identity do ew. tworzenia par
                                              download=False, **common_loader_args)
-        test_loader = get_celeba_dataloader(root=args.data_dir, split='test', target_type='identity', transform_mode='eval',
+        test_loader = get_celeba_dataloader(root=args.data_dir, train=False, target_type='identity', transform_mode='eval',
                                              download=False, batch_size=args.batch_size, num_workers=args.num_workers, image_size=args.image_size)
     elif args.dataset == 'imagenet_subset':
-        # Upewnij się, że ścieżka jest poprawna
         train_loader = get_imagenet_subset_dataloader(root=args.imagenet_subset_path, split='train', **common_loader_args)
         test_loader = get_imagenet_subset_dataloader(root=args.imagenet_subset_path, split='val', transform_mode='eval', # Zazwyczaj 'val' dla ImageNet
                                                     batch_size=args.batch_size, num_workers=args.num_workers, image_size=args.image_size)
     else:
         raise ValueError(f"Nieznany dataset: {args.dataset}")
 
-    # Obsługa metody Triplet (owinięcie datasetu)
-    if args.method == 'triplet':
-        train_dataset = TripletDataset(base_train_dataset)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size,
-                                                   shuffle=True, num_workers=args.num_workers)
-    else:
-        # Pozostałe metody (SimCLR, Siamese – te ostatnie obsłużysz podobnie jak Triplet)
-        train_loader = torch.utils.data.DataLoader(base_train_dataset, batch_size=args.batch_size,
-                                                   shuffle=True, num_workers=args.num_workers)
+
 
     print(f"Załadowano dane treningowe dla: {args.dataset} z transformacją: {transform_mode}")
     return train_loader, test_loader
 
-    # print(f"Załadowano dane treningowe dla: {args.dataset} z transformacją: {transform_mode}")
-    # return train_loader, test_loader # Zwracamy też test_loader, chociaż nie jest używany w pętli SSL
 
 def get_model(args):
     """Tworzy i zwraca model na podstawie argumentów."""
@@ -301,22 +288,13 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, args
             loss = criterion(z1, z2)
 
         elif args.method == 'siamese':
-            # UWAGA: DataLoader musi dostarczać PARY (img1, img2) oraz label (0/1)
-            # Obecny DataLoader zwraca (image, label) - wymaga modyfikacji!
-            # Placeholder - zakładamy, że batch_data to (img1, img2, pair_label)
+            
             try:
                 img1, img2, pair_label = batch_data
                 img1, img2, pair_label = img1.to(device), img2.to(device), pair_label.to(device)
             except ValueError:
                  print(f"BŁĄD: DataLoader dla metody '{args.method}' nie zwraca oczekiwanych par (img1, img2, label). Zwrócono: {type(batch_data)}")
-                 # Dla demonstracji, użyjemy losowych danych - NIE UŻYWAĆ W PRAWDZIWYM TRENINGU
-                 img, _ = batch_data
-                 img1 = img.to(device)
-                 img2 = torch.roll(img, shifts=1, dims=0).to(device) # Sztuczna druga część pary
-                 pair_label = torch.randint(0, 2, (img.size(0),), device=device) # Losowe etykiety par
-                 if step == 0: print("OSTRZEŻENIE: Generuję sztuczne pary dla Siamese - popraw DataLoader!")
-
-
+                 
             # Forward pass dla Siamese
             emb1, emb2 = model(img1, img2)
 
@@ -324,22 +302,8 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, args
             loss = criterion(emb1, emb2, pair_label)
 
         elif args.method == 'triplet':
-            # UWAGA: DataLoader musi dostarczać TRIPLETY (anchor, positive, negative)
-            # Obecny DataLoader zwraca (image, label) - wymaga modyfikacji!
-            # Placeholder - zakładamy, że batch_data to (anchor, positive, negative)
-            try:
-                anchor, positive, negative = batch_data
-                anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
-            except ValueError:
-                 print(f"BŁĄD: DataLoader dla metody '{args.method}' nie zwraca oczekiwanych tripletów. Zwrócono: {type(batch_data)}")
-                 # Dla demonstracji - NIE UŻYWAĆ W PRAWDZIWYM TRENINGU
-                 img, _ = batch_data
-                 anchor = img.to(device)
-                 positive = torch.roll(img, shifts=1, dims=0).to(device) # Sztuczny positive
-                 negative = torch.roll(img, shifts=2, dims=0).to(device) # Sztuczny negative
-                 if step == 0: print("OSTRZEŻENIE: Generuję sztuczne triplety - popraw DataLoader/Sampler!")
-
-
+            anchor, positive, negative = batch_data
+            anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
             # Forward pass dla Triplet (wywołany 3 razy)
             emb_a = model(anchor)
             emb_p = model(positive)
@@ -414,7 +378,6 @@ def main(args):
         print(f'--- Koniec Epoki [{epoch+1}/{args.epochs}] ---')
         print(f'Średnia strata treningowa: {avg_train_loss:.4f}')
         print(f'Czas epoki: {epoch_time:.2f}s')
-        # TODO: Logowanie do TensorBoard/WandB
         writer.add_scalar('Loss/Train', avg_train_loss, epoch)
         writer.add_scalar('LearningRate', optimizer.param_groups[0]['lr'], epoch)
 
@@ -448,13 +411,11 @@ def main(args):
     print(f"Ostatni enkoder zapisany w: {last_checkpoint_file}")
     print(f"Najlepszy enkoder zapisany w: {best_checkpoint_file}")
 
-    # TODO: Zamknięcie loggera
     writer.close()
 
 # ----------- Entry Point -----------
 
 if __name__ == "__main__":
-    # Pobierz aktualną datę i godzinę
     now = datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=2))) # CEST UTC+2
     print(f"Skrypt uruchomiony: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 

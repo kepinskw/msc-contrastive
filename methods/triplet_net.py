@@ -15,7 +15,7 @@ class TripletNet(nn.Module):
         """
         super().__init__()
         self.base_encoder = base_encoder_class(pretrained=False)
-        self.embedding_dim = self.base_encoder.output_dim# Przykład
+        self.embedding_dim = self.base_encoder.output_dim # Przykład
      
 
 

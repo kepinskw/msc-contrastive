@@ -67,6 +67,18 @@ def get_celeba_dataloader(root='./data', batch_size=128, num_workers=4, transfor
     )
     return dataloader
 
+
+def get_celeba_dataset(root='./data',transform_mode='simclr', split='train', target_type='attr', download=False, image_size=128):
+    """Helper function to get CelebA DataLoader."""
+    dataset = CelebAContrastive(
+        root=root,
+        split=split,
+        target_type=target_type,
+        transform_mode=transform_mode,
+        download=download,
+        image_size=image_size
+    )
+    return dataset
 # Example Usage
 # if __name__ == '__main__':
 #     # Ensure you have the CelebA dataset downloaded and extracted in ./data/celeba

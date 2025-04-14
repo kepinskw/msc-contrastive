@@ -83,6 +83,28 @@ def get_imagenet_subset_dataloader(root, batch_size=128, num_workers=4, transfor
     )
     return dataloader
 
+
+def get_imagenet_subset_dataset(root, transform_mode='simclr', split='train', image_size=224):
+    """
+    Helper function to get ImageNet subset DataLoader.
+    Args:
+        root (str): Path to the ROOT directory containing 'train' and 'val' (or 'test') subfolders
+                     structured for ImageFolder (e.g., root='path/to/imagenet_100').
+        batch_size (int): Batch size.
+        num_workers (int): Number of worker processes.
+        transform_mode (str): 'simclr', 'eval', 'basic_augment', 'none'.
+        split (str): 'train' or 'val' (or 'test' depending on your folder name).
+        image_size (int): Target image size (usually 224 for ImageNet).
+    Returns:
+        DataLoader: PyTorch DataLoader instance.
+    """
+    dataset = ImageNetSubsetContrastive(
+        root=root,
+        split=split,
+        transform_mode=transform_mode,
+        image_size=image_size
+    )
+    return dataset
 # Example Usage
 # if __name__ == '__main__':
 #     # IMPORTANT: Replace with the ACTUAL path to your ImageNet subset directory

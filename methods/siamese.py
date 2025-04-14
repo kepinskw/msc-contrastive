@@ -13,16 +13,8 @@ class SiameseNet(nn.Module):
             base_encoder_class: Klasa enkodera bazowego.
         """
         super().__init__()
-
-        # TODO: Zainicjalizuj JEDEN enkoder bazowy - jego wagi będą współdzielone
-        # self.base_encoder = base_encoder_class(pretrained=False) # Przykład
-        base_output_dim = 2048 # Placeholder
-        self.base_encoder = nn.Sequential( # Placeholder - zastąp prawdziwym enkoderem
-             nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
-             # ...
-             nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(), nn.Linear(64, base_output_dim)
-        )
-        print(f"Uwaga: Używam placeholdera dla base_encoder w SiameseNet!")
+        self.base_encoder = base_encoder_class(pretrained=False)
+        self.embedding_dim = self.base_encoder.output_dim # Przykład
 
     def forward_one(self, x: torch.Tensor) -> torch.Tensor:
         """Przetwarza jedno wejście przez enkoder bazowy."""

@@ -65,18 +65,6 @@ class TripletLoss(nn.Module):
 
         # Zastosuj max(0, loss) używając clamp
         loss = torch.clamp(loss, min=0.0)
-
-        # Zwróć średnią stratę dla całego batcha (tylko dla niezerowych strat)
-        # Lub prostą średnią dla wszystkich tripletów
-        # mean_loss = loss.mean() # Średnia po wszystkich tripletach
-        # Często spotykane: średnia tylko dla tripletów, które naruszyły margines
-        # non_zero_losses = loss[loss > 1e-9] # Wybierz straty większe od małego epsilon
-        # if non_zero_losses.numel() > 0:
-        #      mean_loss = non_zero_losses.mean()
-        # else:
-        #      mean_loss = torch.tensor(0.0, device=loss.device, dtype=loss.dtype) # Jeśli żadna strata nie była > 0
-
-        # Alternatywnie, prostsza średnia po wszystkich:
         mean_loss = loss.mean()
 
         return mean_loss

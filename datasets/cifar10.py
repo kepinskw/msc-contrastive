@@ -5,6 +5,7 @@ from torchvision import transforms
 from torchvision.datasets import CIFAR10
 from augmentation.transforms import SimCLRTransform, StandardTransform, BasicAugmentation
 from PIL import Image
+from datasets.wrappers import TripletDataset, SiameseDataset, SimCLRDataset
 
 class CIFAR10Contrastive(CIFAR10):
     """
@@ -45,64 +46,105 @@ class CIFAR10Contrastive(CIFAR10):
             # Return the single transformed view
             return processed_img, target
 
-
 def get_cifar10_dataloader(root='./data', batch_size=128, num_workers=4, transform_mode='simclr', train=True, download=True, image_size=32):
     """
-    Helper function to get CIFAR10 DataLoader.
-    Args:
-        root (str): Path to dataset directory.
-        batch_size (int): Batch size.
-        num_workers (int): Number of worker processes for data loading.
-        transform_mode (str): 'simclr' (two views), 'eval' (standard eval transforms),
-                              'basic_augment' (simple train augment), 'none' (minimal).
-        train (bool): Load training or test set.
-        download (bool): Download dataset if not present.
-        image_size (int): Target image size.
-    Returns:
-        DataLoader: PyTorch DataLoader instance.
+    Helper function to get CIFAR10 DataLoader, obsługująca różne tryby.
+    (Docstring arguments jak poprzednio)
     """
-    dataset = CIFAR10Contrastive(
-        root=root,
-        train=train,
-        transform_mode=transform_mode,
-        download=download,
-        image_size=image_size
-    )
+    dataset = None # Zmienna na finalny obiekt Dataset
 
-    # Disable shuffling for the test set
+    # 1. Wybierz i przygotuj dataset na podstawie transform_mode
+    if transform_mode == 'simclr':
+        # Używa CIFAR10Contrastive, która tworzy SimCLRTransform wewnątrz
+        print(f"INFO: Tworzenie datasetu CIFAR10Contrastive dla trybu: {transform_mode}")
+        dataset = SimCLRDataset(root=root, train=train, download=download, transform_mode=transform_mode, image_size=image_size)
+
+    elif transform_mode == 'eval':
+        # Używa CIFAR10Contrastive, która tworzy StandardTransform wewnątrz
+        print(f"INFO: Tworzenie datasetu CIFAR10Contrastive dla trybu: {transform_mode}")
+        dataset = CIFAR10Contrastive(root=root, train=train, download=download, transform_mode=transform_mode, image_size=image_size)
+
+    elif transform_mode == 'basic_augment':
+        # Używa CIFAR10Contrastive, która tworzy BasicAugmentation wewnątrz
+        print(f"INFO: Tworzenie datasetu CIFAR10Contrastive dla trybu: {transform_mode}")
+        dataset = CIFAR10Contrastive(root=root, train=train, download=download, transform_mode=transform_mode, image_size=image_size)
+
+    elif transform_mode == 'siamese':
+        print(f"INFO: Tworzenie datasetu SiameseDatasetWrapper dla trybu: {transform_mode}")
+        transform_siamese = BasicAugmentation(image_size=image_size, dataset='cifar10')
+        base_raw_dataset = CIFAR10(root=root, train=train, download=download, transform=None)
+        
+        dataset = SiameseDataset(base_dataset=base_raw_dataset, transform=transform_siamese)
+        
+    elif transform_mode == 'triplet':
+        print(f"INFO: Tworzenie datasetu Triplet dla trybu: {transform_mode}")
+        transform_triplet = BasicAugmentation(image_size=image_size, dataset='cifar10')
+        base_raw_dataset = CIFAR10(root=root, train=train, download=download, transform=None)
+    
+        dataset = TripletDataset(base_dataset=base_raw_dataset, transform=transform_triplet)
+
+
+    elif transform_mode == 'none':
+        # Używa CIFAR10Contrastive, która tworzy minimalną transformację wewnątrz
+        print(f"INFO: Tworzenie datasetu CIFAR10Contrastive dla trybu: {transform_mode}")
+        dataset = CIFAR10Contrastive(root=root, train=train, download=download, transform_mode=transform_mode, image_size=image_size)
+
+    else:
+         raise ValueError(f"Nieznany transform_mode: '{transform_mode}'")
+
+    # Sprawdzenie, czy dataset został utworzony
+    if dataset is None:
+         # Teoretycznie nie powinno się zdarzyć przy poprawnej obsłudze wszystkich trybów
+         raise RuntimeError(f"Dataset nie został zainicjalizowany dla transform_mode='{transform_mode}'.")
+
+    # 2. Utwórz DataLoader
     shuffle = train
-
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
-        pin_memory=True, # Improves data transfer speed to GPU
-        drop_last=train # Drop last incomplete batch during training
+        pin_memory=True,
+        drop_last=train
     )
+    print(f"INFO: Utworzono DataLoader dla trybu '{transform_mode}' (train={train})")
     return dataloader
+# def get_cifar10_dataloader(root='./data', batch_size=128, num_workers=4, transform_mode='simclr', train=True, download=True, image_size=32):
+#     """
+#     Helper function to get CIFAR10 DataLoader.
+#     Args:
+#         root (str): Path to dataset directory.
+#         batch_size (int): Batch size.
+#         num_workers (int): Number of worker processes for data loading.
+#         transform_mode (str): 'simclr' (two views), 'eval' (standard eval transforms),
+#                               'basic_augment' (simple train augment), 'none' (minimal).
+#         train (bool): Load training or test set.
+#         download (bool): Download dataset if not present.
+#         image_size (int): Target image size.
+#     Returns:
+#         DataLoader: PyTorch DataLoader instance.
+#     """
+#     dataset = CIFAR10Contrastive(
+#         root=root,
+#         train=train,
+#         transform_mode=transform_mode,
+#         download=download,
+#         image_size=image_size
+#     )
 
-# Example Usage (można umieścić w bloku if __name__ == "__main__":)
-if __name__ == '__main__':
-    # Get SimCLR training loader
-    train_loader_simclr = get_cifar10_dataloader(transform_mode='simclr', train=True)
-    # Get standard evaluation test loader
-    test_loader_eval = get_cifar10_dataloader(transform_mode='eval', train=False)
+#     # Disable shuffling for the test set
+#     shuffle = train
 
-    # Iterate over one batch for inspection
-    for (views, labels) in train_loader_simclr:
-        print("SimCLR mode:")
-        print("Views tuple length:", len(views))
-        print("View 1 shape:", views[0].shape) # Shape: [batch_size, C, H, W]
-        print("View 2 shape:", views[1].shape)
-        print("Labels shape:", labels.shape)
-        break
-
-    for (images, labels) in test_loader_eval:
-        print("\nEval mode:")
-        print("Images shape:", images.shape) # Shape: [batch_size, C, H, W]
-        print("Labels shape:", labels.shape)
-        break
+#     dataloader = DataLoader(
+#         dataset,
+#         batch_size=batch_size,
+#         shuffle=shuffle,
+#         num_workers=num_workers,
+#         pin_memory=True, # Improves data transfer speed to GPU
+#         drop_last=train # Drop last incomplete batch during training
+#     )
+#     return dataloader
+    
 
 def get_cifar10_dataset(root='./data', transform_mode='simclr', train=True, download=True, image_size=32):
     """
@@ -116,3 +158,27 @@ def get_cifar10_dataset(root='./data', transform_mode='simclr', train=True, down
         download=download,
         image_size=image_size
     )
+
+# Example Usage (można umieścić w bloku if __name__ == "__main__":)
+# if __name__ == '__main__':
+#     # Get SimCLR training loader
+#     train_loader_simclr = get_cifar10_dataloader(transform_mode='simclr', train=True)
+#     # Get standard evaluation test loader
+#     test_loader_eval = get_cifar10_dataloader(transform_mode='eval', train=False)
+
+#     # Iterate over one batch for inspection
+#     for (views, labels) in train_loader_simclr:
+#         print("SimCLR mode:")
+#         print("Views tuple length:", len(views))
+#         print("View 1 shape:", views[0].shape) # Shape: [batch_size, C, H, W]
+#         print("View 2 shape:", views[1].shape)
+#         print("Labels shape:", labels.shape)
+#         break
+
+#     for (images, labels) in test_loader_eval:
+#         print("\nEval mode:")
+#         print("Images shape:", images.shape) # Shape: [batch_size, C, H, W]
+#         print("Labels shape:", labels.shape)
+#         break
+
+

@@ -5,7 +5,8 @@ from torchvision import transforms
 from torchvision.datasets import SVHN
 from augmentation.transforms import SimCLRTransform, StandardTransform, BasicAugmentation
 from PIL import Image # SVHN needs explicit conversion sometimes
-
+from datasets.wrappers import TripletDataset, SiameseDataset, SimCLRDataset
+import numpy as np
 class SVHNContrastive(SVHN):
     """Wrapper for SVHN dataset."""
     def __init__(self, root, split='train', transform_mode='simclr', download=True, image_size=32):
@@ -44,6 +45,71 @@ class SVHNContrastive(SVHN):
 
 
 def get_svhn_dataloader(root='./data', batch_size=128, num_workers=4, transform_mode='simclr', split='train', download=True, image_size=32):
+    """
+    Helper function to get SVHN DataLoader, obsługująca różne tryby.
+    (Docstring arguments jak poprzednio)
+    """
+    dataset = None # Zmienna na finalny obiekt Dataset
+    # split = 'train' if train else 'test'
+    # 1. Wybierz i przygotuj dataset na podstawie transform_mode
+    if transform_mode == 'simclr':
+        # Używa SVHNContrastive, która tworzy SimCLRTransform wewnątrz
+        print(f"INFO: Tworzenie datasetu SVHNContrastive dla trybu: {transform_mode}")
+        dataset = SimCLRDataset(root=root, split='train', download=download, transform_mode=transform_mode, image_size=image_size)
+
+    elif transform_mode == 'eval':
+        # Używa SVHNContrastive, która tworzy StandardTransform wewnątrz
+        print(f"INFO: Tworzenie datasetu SVHNContrastive dla trybu: {transform_mode}")
+        dataset = SVHNContrastive(root=root, split='train', download=download, transform_mode=transform_mode, image_size=image_size)
+
+    elif transform_mode == 'basic_augment':
+        # Używa SVHNContrastive, która tworzy BasicAugmentation wewnątrz
+        print(f"INFO: Tworzenie datasetu SVHNContrastive dla trybu: {transform_mode}")
+        dataset = SVHNContrastive(root=root, split='train', download=download, transform_mode=transform_mode, image_size=image_size)
+
+    elif transform_mode == 'siamese':
+        print(f"INFO: Tworzenie datasetu SiameseDatasetWrapper dla trybu: {transform_mode}")
+        transform_siamese = BasicAugmentation(image_size=image_size, dataset='SVHN')
+        base_raw_dataset = SVHN(root=root, split='train', download=download, transform=None)
+        
+        dataset = SiameseDataset(base_dataset=base_raw_dataset, transform=transform_siamese)
+        
+    elif transform_mode == 'triplet':
+        print(f"INFO: Tworzenie datasetu Triplet dla trybu: {transform_mode}")
+        transform_triplet = BasicAugmentation(image_size=image_size, dataset='SVHN')
+        base_raw_dataset = SVHN(root=root, split='train', download=download, transform=None)
+    
+        dataset = TripletDataset(base_dataset=base_raw_dataset, transform=transform_triplet)
+
+
+    elif transform_mode == 'none':
+        # Używa SVHNContrastive, która tworzy minimalną transformację wewnątrz
+        print(f"INFO: Tworzenie datasetu SVHNContrastive dla trybu: {transform_mode}")
+        dataset = SVHNContrastive(root=root, split='train', download=download, transform_mode=transform_mode, image_size=image_size)
+
+    else:
+         raise ValueError(f"Nieznany transform_mode: '{transform_mode}'")
+
+    # Sprawdzenie, czy dataset został utworzony
+    if dataset is None:
+         # Teoretycznie nie powinno się zdarzyć przy poprawnej obsłudze wszystkich trybów
+         raise RuntimeError(f"Dataset nie został zainicjalizowany dla transform_mode='{transform_mode}'.")
+    train = True if split == 'train' else False
+
+    # 2. Utwórz DataLoader
+    shuffle = train
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=train
+    )
+    print(f"INFO: Utworzono DataLoader dla trybu '{transform_mode}' (train={train})")
+    return dataloader
+
+def get_svhn_dataset(root='./data',transform_mode='simclr', split='train', download=True, image_size=32):
     """Helper function to get SVHN DataLoader."""
     dataset = SVHNContrastive(
         root=root,
@@ -52,17 +118,7 @@ def get_svhn_dataloader(root='./data', batch_size=128, num_workers=4, transform_
         download=download,
         image_size=image_size
     )
-    shuffle = (split == 'train')
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=True,
-        drop_last=shuffle # Drop last only for training
-    )
-    return dataloader
-
+    return dataset
 # Example Usage
 # if __name__ == '__main__':
 #     import numpy as np # Needed for transpose
