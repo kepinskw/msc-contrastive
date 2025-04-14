@@ -10,7 +10,7 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 # Importuj komponenty z projektu
-from datasets.cifar10 import get_cifar10_dataloader
+from datasets.cifar10 import get_cifar10_dataloader, get_cifar10_dataset
 from datasets.svhn import get_svhn_dataloader
 from datasets.celeba import get_celeba_dataloader
 from datasets.imagenet_subset import get_imagenet_subset_dataloader
@@ -22,6 +22,8 @@ from methods.triplet_net import TripletNet
 from losses.nt_xent import NTXentLoss
 from losses.contrastive import ContrastiveLoss
 from losses.triplet import TripletLoss
+
+from datasets.tripletdataset import TripletDataset  
 
 # (Opcjonalnie) Import logowania, np. TensorBoard
 from torch.utils.tensorboard import SummaryWriter
@@ -126,8 +128,15 @@ def get_dataloader(args):
         'transform_mode': transform_mode,
         'image_size': args.image_size
     }
-
+    common_dataset_args = {
+    'transform_mode': transform_mode,
+    'image_size': args.image_size,
+    'train': True,
+    'download': True
+    }
     if args.dataset == 'cifar10':
+        base_train_dataset = get_cifar10_dataset(root=args.data_dir, **common_dataset_args)
+
         train_loader = get_cifar10_dataloader(root=args.data_dir, train=True, **common_loader_args)
         # Walidacja SSL zazwyczaj nie jest robiona, ale można dodać test loader do ew. wizualizacji
         test_loader = get_cifar10_dataloader(root=args.data_dir, train=False, transform_mode='eval', # Użyj eval transform dla test
@@ -150,8 +159,21 @@ def get_dataloader(args):
     else:
         raise ValueError(f"Nieznany dataset: {args.dataset}")
 
+    # Obsługa metody Triplet (owinięcie datasetu)
+    if args.method == 'triplet':
+        train_dataset = TripletDataset(base_train_dataset)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size,
+                                                   shuffle=True, num_workers=args.num_workers)
+    else:
+        # Pozostałe metody (SimCLR, Siamese – te ostatnie obsłużysz podobnie jak Triplet)
+        train_loader = torch.utils.data.DataLoader(base_train_dataset, batch_size=args.batch_size,
+                                                   shuffle=True, num_workers=args.num_workers)
+
     print(f"Załadowano dane treningowe dla: {args.dataset} z transformacją: {transform_mode}")
-    return train_loader, test_loader # Zwracamy też test_loader, chociaż nie jest używany w pętli SSL
+    return train_loader, test_loader
+
+    # print(f"Załadowano dane treningowe dla: {args.dataset} z transformacją: {transform_mode}")
+    # return train_loader, test_loader # Zwracamy też test_loader, chociaż nie jest używany w pętli SSL
 
 def get_model(args):
     """Tworzy i zwraca model na podstawie argumentów."""

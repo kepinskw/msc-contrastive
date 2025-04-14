@@ -103,3 +103,16 @@ if __name__ == '__main__':
         print("Images shape:", images.shape) # Shape: [batch_size, C, H, W]
         print("Labels shape:", labels.shape)
         break
+
+def get_cifar10_dataset(root='./data', transform_mode='simclr', train=True, download=True, image_size=32):
+    """
+    Zwraca instancję CIFAR10Contrastive (dataset), bez DataLoadera.
+    Przydatne np. dla TripletDataset.
+    """
+    return CIFAR10Contrastive(
+        root=root,
+        train=train,
+        transform_mode=transform_mode,
+        download=download,
+        image_size=image_size
+    )

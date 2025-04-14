@@ -70,28 +70,28 @@ class TripletLoss(nn.Module):
         # Lub prostą średnią dla wszystkich tripletów
         # mean_loss = loss.mean() # Średnia po wszystkich tripletach
         # Często spotykane: średnia tylko dla tripletów, które naruszyły margines
-        non_zero_losses = loss[loss > 1e-9] # Wybierz straty większe od małego epsilon
-        if non_zero_losses.numel() > 0:
-             mean_loss = non_zero_losses.mean()
-        else:
-             mean_loss = torch.tensor(0.0, device=loss.device, dtype=loss.dtype) # Jeśli żadna strata nie była > 0
+        # non_zero_losses = loss[loss > 1e-9] # Wybierz straty większe od małego epsilon
+        # if non_zero_losses.numel() > 0:
+        #      mean_loss = non_zero_losses.mean()
+        # else:
+        #      mean_loss = torch.tensor(0.0, device=loss.device, dtype=loss.dtype) # Jeśli żadna strata nie była > 0
 
         # Alternatywnie, prostsza średnia po wszystkich:
-        # mean_loss = loss.mean()
+        mean_loss = loss.mean()
 
         return mean_loss
 
 
 # Przykład użycia (można umieścić w bloku if __name__ == "__main__":)
-# if __name__ == '__main__':
-#     loss_fn = TripletLoss(margin=0.5, use_distance_squared=True)
-#     # Przykładowe embeddingi
-#     anchor_emb = torch.randn(4, 128, requires_grad=True)
-#     positive_emb = anchor_emb + torch.randn(4, 128) * 0.1 # Blisko anchor
-#     negative_emb = torch.randn(4, 128)                 # Losowo, dalej od anchor
-#
-#     loss_value = loss_fn(anchor_emb, positive_emb, negative_emb)
-#     print(f"Triplet Loss: {loss_value.item()}")
-#     # Sprawdzenie gradientów
-#     # loss_value.backward()
-#     # print(anchor_emb.grad is not None)
+if __name__ == '__main__':
+    loss_fn = TripletLoss(margin=0.5, use_distance_squared=True)
+    # Przykładowe embeddingi
+    anchor_emb = torch.randn(4, 128, requires_grad=True)
+    positive_emb = anchor_emb + torch.randn(4, 128) * 0.1 # Blisko anchor
+    negative_emb = torch.randn(4, 128)                 # Losowo, dalej od anchor
+
+    loss_value = loss_fn(anchor_emb, positive_emb, negative_emb)
+    print(f"Triplet Loss: {loss_value.item()}")
+    # Sprawdzenie gradientów
+    # loss_value.backward()
+    # print(anchor_emb.grad is not None)
