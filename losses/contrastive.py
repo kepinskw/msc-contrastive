@@ -51,11 +51,8 @@ class ContrastiveLoss(nn.Module):
         loss_similar = euclidean_distance.pow(2)
 
         # Strata dla par różnych (label == 1): max(0, margin - distance)^2
-        # Używamy clamp(min=0) zamiast max(0, ...)
         loss_dissimilar = torch.clamp(self.margin - euclidean_distance, min=0.0).pow(2)
 
-        # Połącz straty używając etykiet
-        # label musi być typu float, aby można było mnożyć
         label_float = label.float()
         loss = (1.0 - label_float) * loss_similar + label_float * loss_dissimilar
 

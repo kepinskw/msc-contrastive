@@ -1,24 +1,23 @@
 # methods/siamese.py
 import torch
 import torch.nn as nn
-# from models.resnet_base import get_base_encoder # Przykład importu enkodera
+from models.resnet_base import get_resnet_encoder 
 
 class SiameseNet(nn.Module):
     """
     Sieć Syjamska. Używa jednego enkodera bazowego do przetwarzania par wejść.
     """
-    def __init__(self, base_encoder_class):
+    def __init__(self, base_encoder_class=get_resnet_encoder):
         """
         Args:
             base_encoder_class: Klasa enkodera bazowego.
         """
         super().__init__()
         self.base_encoder = base_encoder_class(pretrained=False)
-        self.embedding_dim = self.base_encoder.output_dim # Przykład
+        self.embedding_dim = self.base_encoder.output_dim 
 
     def forward_one(self, x: torch.Tensor) -> torch.Tensor:
         """Przetwarza jedno wejście przez enkoder bazowy."""
-        # TODO: Przepuść x przez enkoder bazowy i zwróć embedding
         return self.base_encoder(x) # Placeholder
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

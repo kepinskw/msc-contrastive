@@ -47,18 +47,11 @@ def get_resnet_encoder(name: str = "resnet50", pretrained: bool = False, **kwarg
         output_feature_dim = 2048 if name in ["resnet50", "resnet101", "resnet152"] else 512
         print(f"Przyjęto domyślny wymiar cech: {output_feature_dim}")
 
-
-    # Usuń ostatnią warstwę klasyfikacyjną 'fc'
-    # Metoda 1: Zastąp 'fc' warstwą identycznościową
-    # encoder.fc = nn.Identity()
-
     # Metoda 2: Utwórz nowy model sekwencyjny bez 'fc' (bardziej jawne)
     # Lista modułów ResNet bez ostatniej warstwy
     modules = list(encoder.children())[:-1]
     encoder = nn.Sequential(*modules, nn.Flatten())
 
-    # Dodaj atrybut, aby łatwo uzyskać dostęp do wymiaru cech
-    # Uwaga: Po nn.Sequential, model może nie mieć atrybutów bezpośrednio
     # Można opakować w dodatkową klasę, jeśli potrzebny jest atrybut 'output_dim'
     # Prostsze rozwiązanie: zwróć wymiar razem z modelem
     # return encoder, output_feature_dim
@@ -71,16 +64,10 @@ def get_resnet_encoder(name: str = "resnet50", pretrained: bool = False, **kwarg
             self.output_dim = dim
 
         def forward(self, x):
-            # x = self.encoder(x)
-            # ResNet zwraca cechy po global average pooling, trzeba je spłaszczyć
-            # nn.Flatten jest teraz częścią sekwencji, jeśli użyto metody 2
-            # Jeśli nie, dodaj spłaszczenie tutaj lub w modelu nadrzędnym (np. SimCLRNet)
-            # Dla bezpieczeństwa, upewnijmy się, że jest spłaszczony:
             return self.encoder(x)
 
     wrapped_encoder = ResNetWrapper(encoder, output_feature_dim)
 
-    # Zwróć zmodyfikowany enkoder
     # return encoder # Jeśli użyto Metody 1 lub nie potrzebujesz atrybutu .output_dim
     return wrapped_encoder
 

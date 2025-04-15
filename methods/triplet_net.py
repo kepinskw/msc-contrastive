@@ -30,6 +30,5 @@ class TripletNet(nn.Module):
         Returns:
             Embedding dla wejścia x.
         """
-        # TODO: Przepuść x przez enkoder bazowy i zwróć embedding
         embedding = self.base_encoder(x) # Placeholder
         return embedding

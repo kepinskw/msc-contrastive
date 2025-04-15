@@ -92,7 +92,9 @@ def parse_arguments():
     parser.add_argument('--run_name', type=str, default=f'ssl_run_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}',
                         help='Nazwa bieżącego uruchomienia (dla logów i checkpointów).')
 
-
+    parser.add_argument('--resume', default='', type=str, metavar='PATH',
+                        help='Ścieżka do checkpointu, od którego wznowić trening (domyślnie: nie wznawiaj)')
+    
     return parser.parse_args()
 
 # ----------- Helper Functions -----------
@@ -346,7 +348,6 @@ def main(args):
     os.makedirs(checkpoint_path, exist_ok=True)
     print(f"Checkpointy będą zapisywane w: {checkpoint_path}")
 
-    # TODO: Inicjalizacja logowania (np. TensorBoard)
     writer = SummaryWriter(log_dir=os.path.join('logs', args.run_name))
 
     # Ładowanie danych
@@ -357,14 +358,93 @@ def main(args):
     criterion = get_loss(args, device)
     optimizer = get_optimizer(model, args)
     scheduler = get_scheduler(optimizer, args)
+    start_epoch = 0 
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print(f"=> Ładowanie checkpointu '{args.resume}'")
+            try:
+                # Załaduj checkpoint na CPU najpierw, aby uniknąć problemów z GPU
+                checkpoint = torch.load(args.resume, map_location='cpu')
+
+                # Załaduj stan modelu
+                if 'model_state_dict' in checkpoint:
+                    model_state_dict = checkpoint['model_state_dict']
+                    # Obsługa prefixu 'module.' jeśli model był trenowany z nn.DataParallel
+                    if all(key.startswith('module.') for key in model_state_dict.keys()):
+                         print("  Wykryto prefix 'module.' w checkpoincie modelu, usuwanie...")
+                         model_state_dict = {k.replace('module.', '', 1): v for k, v in model_state_dict.items()}
+
+                    # Załaduj stan do bieżącego modelu
+                    try:
+                         model.load_state_dict(model_state_dict, strict=True)
+                         print("  Pomyślnie załadowano stan modelu.")
+                    except RuntimeError as e:
+                         print(f"  Ostrzeżenie: Nie udało się załadować stanu modelu (strict=True): {e}. Sprawdź architekturę.")
+                         # Możesz spróbować strict=False, ale bądź ostrożny:
+                         # model.load_state_dict(model_state_dict, strict=False)
+                         # print("  Załadowano stan modelu z strict=False (sprawdź ostrzeżenia).")
+                else:
+                    print("  Ostrzeżenie: Brak 'model_state_dict' w checkpoincie.")
+
+                # Załaduj stan optymalizatora
+                if 'optimizer_state_dict' in checkpoint and optimizer is not None:
+                    try:
+                        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                        optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['initial_lr']
+                        print("  Pomyślnie załadowano stan optymalizatora.")
+                        # Ważne: Przenieś stan optymalizatora na właściwe urządzenie, jeśli to konieczne
+                        for state in optimizer.state.values():
+                             for k, v in state.items():
+                                 if isinstance(v, torch.Tensor):
+                                     state[k] = v.to(device)
+                    except Exception as e:
+                        print(f"  Ostrzeżenie: Nie udało się załadować stanu optymalizatora: {e}")
+                else:
+                    print("  Ostrzeżenie: Brak 'optimizer_state_dict' w checkpoincie lub optimizer=None.")
+
+                # Załaduj stan schedulera (jeśli istnieje)
+                if 'scheduler_state_dict' in checkpoint and scheduler is not None:
+                     try:
+                         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                         print("  Pomyślnie załadowano stan schedulera.")
+                     except Exception as e:
+                          print(f"  Ostrzeżenie: Nie udało się załadować stanu schedulera: {e}")
+                # else: print("  Info: Brak 'scheduler_state_dict' w checkpoincie lub scheduler=None.") # Mniej istotne ostrzeżenie
+
+                # Załaduj numer epoki (zapisujemy numer *zakończonej* epoki)
+                if 'epoch' in checkpoint:
+                    start_epoch = checkpoint['epoch']
+                    print(f"  Wznawianie treningu od epoki: {start_epoch + 1}")
+                else:
+                    print("  Ostrzeżenie: Brak informacji o epoce w checkpoincie. Zaczynam od epoki 0.")
+
+                # Załaduj inne zapisane wartości (np. najlepsza strata)
+                if 'best_loss' in checkpoint:
+                    best_loss = checkpoint['best_loss']
+                    print(f"  Załadowano najlepszą stratę: {best_loss:.4f}")
+
+
+                print(f"=> Pomyślnie załadowano informacje z checkpointu '{args.resume}'")
+
+            except Exception as e:
+                print(f"BŁĄD: Nie udało się załadować checkpointu '{args.resume}': {e}")
+                print("Rozpoczynanie treningu od początku.")
+                start_epoch = 0 # Resetuj na wszelki wypadek
+        else:
+            print(f"OSTRZEŻENIE: Podany plik checkpointu '{args.resume}' nie istnieje!")
+            print("Rozpoczynanie treningu od początku.")
+    else:
+        print("Nie podano argumentu --resume, rozpoczynanie treningu od początku.")
+
 
     # Główna pętla treningowa
+    args.epochs += start_epoch
     print(f"Rozpoczynanie treningu na {args.epochs} epok...")
     start_training_time = time.time()
 
     best_loss = float('inf')
-
-    for epoch in range(args.epochs):
+    
+    for epoch in range(start_epoch, args.epochs):
         epoch_start_time = time.time()
 
         # Trening
@@ -382,11 +462,28 @@ def main(args):
         writer.add_scalar('LearningRate', optimizer.param_groups[0]['lr'], epoch)
 
         # Zapisywanie checkpointu
+        current_epoch_display = epoch + 1
+
         # Zapisujemy tylko ENKODER BAZOWY, bo to on jest używany do ewaluacji downstream
         if hasattr(model, 'base_encoder'):
-            encoder_state_dict = model.base_encoder.state_dict()
+            encoder_state_dict = {
+                        'epoch': current_epoch_display,
+                        'model_state_dict': model.state_dict(), 
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+                        'best_loss': best_loss if best_loss else avg_train_loss, # Jeśli śledzisz
+                        # 'args': args
+                    }
+
         elif isinstance(model, SimCLRNet): # SimCLRNet ma enkoder jako atrybut
-             encoder_state_dict = model.base_encoder.state_dict()
+            encoder_state_dict = {
+                        'epoch': current_epoch_display,
+                        'model_state_dict': model.base_encoder.state_dict(), 
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+                        'best_loss': best_loss if best_loss else avg_train_loss, # Jeśli śledzisz
+                        # 'args': args
+                    }
         else:
              print("Ostrzeżenie: Nie można automatycznie zidentyfikować enkodera bazowego do zapisu.")
              # Spróbuj zapisać cały model, ale to mniej użyteczne dla ewaluacji SSL
@@ -400,6 +497,7 @@ def main(args):
         # Zapisz najlepszy model (na podstawie straty treningowej - uproszczenie)
         if avg_train_loss < best_loss:
             best_loss = avg_train_loss
+            encoder_state_dict[best_loss] = best_loss
             best_checkpoint_file = os.path.join(checkpoint_path, 'best_encoder.pth')
             torch.save(encoder_state_dict, best_checkpoint_file)
             print(f"Zapisano nowy najlepszy enkoder (strata: {best_loss:.4f}) do {best_checkpoint_file}")
