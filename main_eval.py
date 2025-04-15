@@ -16,25 +16,21 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Importuj komponenty z projektu
-try:
-    from datasets.cifar10 import get_cifar10_dataloader
-    from datasets.svhn import get_svhn_dataloader
-    from datasets.celeba import get_celeba_dataloader
-    from datasets.imagenet_subset import get_imagenet_subset_dataloader
-    from models.resnet_base import get_resnet_encoder
-    from models.projection_head import ProjectionHead
-    from methods.simclr import SimCLRNet
-    from methods.siamese import SiameseNet
-    from methods.triplet_net import TripletNet
-    from losses.nt_xent import NTXentLoss
-    from losses.contrastive import ContrastiveLoss
-    from losses.triplet import TripletLoss
-    from models import get_resnet_encoder
-except ImportError as e:
-    print(f"Błąd importu w main_eval.py: {e}")
-    print("Upewnij się, że uruchamiasz skrypt z głównego katalogu projektu lub ścieżka Pythona jest poprawnie ustawiona.")
-    sys.exit(1)
+from datasets.cifar10 import get_cifar10_dataloader, get_cifar10_dataset
+from datasets.svhn import get_svhn_dataloader, get_svhn_dataset
+from datasets.celeba import get_celeba_dataloader, get_celeba_dataset
+from datasets.imagenet_subset import get_imagenet_subset_dataloader, get_imagenet_subset_dataset
+from models.resnet_base import get_resnet_encoder
+from models.projection_head import ProjectionHead
+from methods.simclr import SimCLRNet
+from methods.siamese import SiameseNet
+from methods.triplet_net import TripletNet
+from losses.nt_xent import NTXentLoss
+from losses.contrastive import ContrastiveLoss
+from losses.triplet import TripletLoss
+
+
+from torch.utils.tensorboard import SummaryWriter
 
 # ----------- Argument Parsing -----------
 
@@ -104,46 +100,123 @@ def set_seed(seed):
     random.seed(seed)
 
 def load_encoder(args, device):
-    """Ładuje pre-trenowany enkoder bazowy, zamraża go i przenosi na urządzenie."""
-    print(f"Ładowanie enkodera bazowego: {args.arch}")
-    encoder = get_resnet_encoder(name=args.arch, pretrained=False) # Zawsze ładujemy bez wag pre-trenowanych z torchvision
+    print(f"--- Ładowanie Enkodera ---")
+    print(f"Architektura: {args.arch}")
+    # 1. Stwórz instancję architektury enkodera (bez wag z torchvision)
+    encoder = get_resnet_encoder(name=args.arch, pretrained=False)
+    if not hasattr(encoder, 'output_dim'):
+         # Jeśli get_resnet_encoder nie dodał atrybutu, spróbujmy go ustalić (ryzykowne)
+         try:
+             dummy_input = torch.randn(1, 3, args.image_size, args.image_size)
+             output_shape = encoder(dummy_input).shape
+             encoder.output_dim = output_shape[-1]
+             print(f"Ostrzeżenie: Atrybut 'output_dim' nie znaleziony. Ustalono na {encoder.output_dim} na podstawie wyjścia.")
+         except Exception:
+             # Użyj domyślnych, jeśli wszystko inne zawiedzie
+             encoder.output_dim = 2048 if '50' in args.arch or '101' in args.arch or '152' in args.arch else 512
+             print(f"Ostrzeżenie: Nie można ustalić 'output_dim'. Ustawiono domyślnie na {encoder.output_dim}.")
 
-    # Załaduj zapisane wagi z checkpointu SSL
+
+    # 2. Sprawdź i załaduj plik checkpointu
     if not os.path.exists(args.checkpoint_path):
         raise FileNotFoundError(f"Plik checkpointu nie znaleziony: {args.checkpoint_path}")
 
+    print(f"Ładowanie checkpointu z: {args.checkpoint_path}")
     try:
-        state_dict = torch.load(args.checkpoint_path, map_location='cpu') # Załaduj najpierw na CPU
-        # Jeśli state_dict zawiera prefix 'module.' (z DataParallel), usuń go
-        if all(key.startswith('module.') for key in state_dict.keys()):
-            print("Wykryto prefix 'module.' w checkpoincie, usuwanie...")
-            state_dict = {k.replace('module.', '', 1): v for k, v in state_dict.items()}
-        # Jeśli state_dict zawiera prefix 'encoder.' (z ResNetWrapper), usuń go
-        if all(key.startswith('encoder.') for key in state_dict.keys()):
-             print("Wykryto prefix 'encoder.' w checkpoincie, usuwanie...")
-             state_dict = {k.replace('encoder.', '', 1): v for k, v in state_dict.items()}
+        # Załaduj cały słownik checkpointu
+        checkpoint = torch.load(args.checkpoint_path, map_location='cpu') # Załaduj najpierw na CPU
 
-        # Dopasuj klucze, jeśli model był opakowany inaczej
-        # Czasem trzeba załadować do `encoder.encoder` jeśli używamy ResNetWrapper
-        if hasattr(encoder, 'encoder') and isinstance(encoder.encoder, nn.Sequential):
-             missing_keys, unexpected_keys = encoder.encoder.load_state_dict(state_dict, strict=False) # Użyj strict=False dla elastyczności
-             if unexpected_keys: print(f"Ostrzeżenie: Niespodziewane klucze w checkpoincie: {unexpected_keys}")
-             if missing_keys: print(f"Ostrzeżenie: Brakujące klucze w modelu: {missing_keys}")
-             print(f"Załadowano wagi do 'encoder.encoder' dla {args.arch}.")
+        # --- POCZĄTEK KLUCZOWEJ ZMIANY ---
+        # 3. Wyodrębnij state_dict modelu z checkpointu
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+            print("  Wyodrębniono 'model_state_dict' z checkpointu.")
+            # Opcjonalnie: Wyświetl inne informacje z checkpointu
+            if 'epoch' in checkpoint: print(f"  Checkpoint zapisany po epoce: {checkpoint['epoch']}")
+            if 'best_loss' in checkpoint: print(f"  Strata zapisana w checkpoincie: {checkpoint['best_loss']}")
         else:
-             encoder.load_state_dict(state_dict)
-             print(f"Załadowano wagi bezpośrednio do {args.arch}.")
+            # Jeśli checkpoint nie jest słownikiem lub nie ma klucza, załóż starą strukturę
+            print("  Ostrzeżenie: Checkpoint nie zawiera klucza 'model_state_dict'. Zakładam, że plik zawiera tylko state_dict modelu.")
+            state_dict = checkpoint
+        # --- KONIEC KLUCZOWEJ ZMIANY ---
 
-    except Exception as e:
-        print(f"Błąd podczas ładowania wag z {args.checkpoint_path}: {e}")
+
+        # 4. Usuń potencjalne prefixy (działamy na wyodrębnionym `state_dict`)
+        original_keys = list(state_dict.keys()) # Dla debugowania
+        needs_prefix_check = True # Flaga do kontroli
+        if all(key.startswith('base_encoder.') for key in state_dict.keys()):
+            print("  Wykryto prefix 'base_encoder.', usuwanie...")
+            state_dict = {k.replace('base_encoder.', '', 1): v for k, v in state_dict.items()}
+        # Teraz klucze powinny zaczynać się od 'encoder.' lub bezpośrednio od cyfr
+        # Sprawdź, czy celem jest wewnętrzny 'encoder' (jak w ResNetWrapper)
+        target_model_for_load = None
+        target_model_name = "enkodera"
+        if hasattr(encoder, 'encoder') and isinstance(encoder.encoder, nn.Module):
+            print("  Cel ładowania: 'encoder.encoder' (struktura z wrapperem).")
+            target_model_for_load = encoder.encoder
+            target_model_name = "'encoder.encoder'"
+            # Jeśli state_dict ma prefix 'encoder.', usuńmy go
+            if all(key.startswith('encoder.') for key in state_dict.keys()):
+                print("    Wykryto prefix 'encoder.' w state_dict, usuwanie...")
+                state_dict = {k.replace('encoder.', '', 1): v for k, v in state_dict.items()}
+                needs_prefix_check = False # Już przetworzyliśmy prefix 'encoder.'
+
+        else:
+            print("  Cel ładowania: główny obiekt enkodera.")
+            target_model_for_load = encoder
+            # Sprawdź, czy state_dict nie ma 'encoder.', gdy nie powinien
+            if any(key.startswith('encoder.') for key in state_dict.keys()):
+                 print("  Ostrzeżenie: State_dict zawiera prefix 'encoder.', ale model docelowy go nie oczekuje.")
+
+        # Usuń prefix 'module.', jeśli istnieje i nie sprawdzaliśmy 'encoder.'
+        if needs_prefix_check and all(key.startswith('module.') for key in state_dict.keys()):
+            print("  Wykryto prefix 'module.', usuwanie...")
+            state_dict = {k.replace('module.', '', 1): v for k, v in state_dict.items()}
+            # Sprawdź ponownie prefix 'encoder.', jeśli 'module.' go zawierał
+            if hasattr(encoder, 'encoder') and isinstance(encoder.encoder, nn.Module) and all(key.startswith('encoder.') for key in state_dict.keys()):
+                 print("    Wykryto prefix 'encoder.' po usunięciu 'module.', usuwanie...")
+                 state_dict = {k.replace('encoder.', '', 1): v for k, v in state_dict.items()}
+
+
+        # 5. Załaduj state_dict do odpowiedniego modułu
+        if target_model_for_load is not None:
+            print(f"  Ładowanie wag do {target_model_name}...")
+            missing_keys, unexpected_keys = target_model_for_load.load_state_dict(state_dict, strict=False)
+            print(f"  Wynik load_state_dict: Brakujące klucze: {len(missing_keys)}, Niespodziewane klucze: {len(unexpected_keys)}")
+            if unexpected_keys:
+                 print(f"  Niespodziewane klucze (pierwsze 5): {unexpected_keys[:5]}")
+                 # Można dodać więcej debugowania, np. porównanie kluczy
+                 # print("  Klucze w modelu docelowym:", list(target_model_for_load.state_dict().keys()))
+                 # print("  Klucze w state_dict (po przetworzeniu):", list(state_dict.keys()))
+            if missing_keys:
+                 print(f"  Brakujące klucze (pierwsze 5): {missing_keys[:5]}")
+
+            if not missing_keys and not unexpected_keys:
+                 print("  Wagi załadowane pomyślnie.")
+            else:
+                 print("  Wagi załadowane (strict=False), wystąpiły pewne różnice w kluczach.")
+        else:
+             raise RuntimeError("Nie udało się zidentyfikować modelu docelowego do załadowania wag.")
+
+    except FileNotFoundError: # Obsłuż konkretny błąd braku pliku
+        print(f"BŁĄD KRYTYCZNY: Plik checkpointu nie istnieje: {args.checkpoint_path}")
+        raise
+    except Exception as e: # Obsłuż inne błędy ładowania
+        print(f"BŁĄD KRYTYCZNY podczas ładowania wag z {args.checkpoint_path}: {e}")
+        import traceback
+        traceback.print_exc()
         raise
 
-    # Zamroź parametry enkodera
+    # 6. Zamroź parametry enkodera
+    print("  Zamrażanie parametrów enkodera...")
     for param in encoder.parameters():
         param.requires_grad = False
     encoder.eval() # Ustaw enkoder w tryb ewaluacji
+
+    # 7. Przenieś na urządzenie
     encoder = encoder.to(device)
     print(f"Enkoder {args.arch} załadowany, zamrożony i przeniesiony na {device}.")
+    print(f"--- Ładowanie Enkodera Zakończone ---")
     return encoder
 
 def get_eval_dataloader(args):
@@ -160,8 +233,8 @@ def get_eval_dataloader(args):
     }
 
     # Argumenty specyficzne dla transformacji 'eval'
-    eval_transform_args_train = {'transform_mode': transform_mode, 'train': True}
-    eval_transform_args_test = {'transform_mode': transform_mode, 'train': False}
+    eval_transform_args_train = {'transform_mode': transform_mode}
+    eval_transform_args_test = {'transform_mode': transform_mode}
 
 
     if args.dataset == 'cifar10':
