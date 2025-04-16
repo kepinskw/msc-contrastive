@@ -163,7 +163,6 @@ def get_dataloader(args):
     print(f"Załadowano dane treningowe dla: {args.dataset} z transformacją: {transform_mode}")
     return train_loader, test_loader
 
-
 def get_model(args):
     """Tworzy i zwraca model na podstawie argumentów."""
     # Pobierz klasę enkodera bazowego
@@ -210,24 +209,24 @@ def get_optimizer(model, args):
             lr=args.lr,
             weight_decay=args.weight_decay
         )
-    elif args.optimizer.lower() == 'sgd':
-        optimizer = optim.SGD(
-            model.parameters(),
-            lr=args.lr,
-            momentum=0.9, # Typowa wartość dla SGD
-            weight_decay=args.weight_decay
-        )
-    elif args.optimizer.lower() == 'lars':
-        # LARS jest często zalecany dla SimCLR z dużymi batchami
-        # Wymaga zewnętrznej implementacji lub nowszych wersji PyTorch
-        try:
-            # from torch.optim import LARS # Sprawdź, czy jest dostępny
-            # optimizer = LARS(...)
-            print("Ostrzeżenie: LARS nie jest standardowo dostępny, używam Adam.")
-            optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) # Fallback
-        except ImportError:
-            print("Ostrzeżenie: LARS nie jest dostępny, używam Adam.")
-            optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) # Fallback
+    # elif args.optimizer.lower() == 'sgd':
+    #     optimizer = optim.SGD(
+    #         model.parameters(),
+    #         lr=args.lr,
+    #         momentum=0.9, # Typowa wartość dla SGD
+    #         weight_decay=args.weight_decay
+    #     )
+    # elif args.optimizer.lower() == 'lars':
+    #     # LARS jest często zalecany dla SimCLR z dużymi batchami
+    #     # Wymaga zewnętrznej implementacji lub nowszych wersji PyTorch
+    #     try:
+    #         # from torch.optim import LARS # Sprawdź, czy jest dostępny
+    #         # optimizer = LARS(...)
+    #         print("Ostrzeżenie: LARS nie jest standardowo dostępny, używam Adam.")
+    #         optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) # Fallback
+    #     except ImportError:
+    #         print("Ostrzeżenie: LARS nie jest dostępny, używam Adam.")
+    #         optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) # Fallback
     else:
         raise ValueError(f"Nieznany optymalizator: {args.optimizer}")
 

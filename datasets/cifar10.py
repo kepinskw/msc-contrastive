@@ -46,7 +46,7 @@ class CIFAR10Contrastive(CIFAR10):
             # Return the single transformed view
             return processed_img, target
 
-def get_cifar10_dataloader(root='./data', batch_size=128, num_workers=4, transform_mode='simclr', train=True, download=True, image_size=32):
+def get_cifar10_dataloader(root='./data', batch_size=128, num_workers=4, transform_mode='None', train=True, download=True, image_size=32):
     """
     Helper function to get CIFAR10 DataLoader, obsługująca różne tryby.
     (Docstring arguments jak poprzednio)

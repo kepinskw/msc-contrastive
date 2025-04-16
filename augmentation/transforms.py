@@ -138,7 +138,7 @@ class BasicAugmentation:
              normalize = transforms.Normalize(mean=DEFAULT_MEAN, std=DEFAULT_STD)
 
         self.transform = transforms.Compose([
-            transforms.RandomResizedCrop(size=image_size, scale=(0.8, 1.0)),
+            transforms.RandomResizedCrop(size=image_size, scale=(0.8, 1.0)), #trainsforms.RandomCrop(size=image_size, padding=4),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,

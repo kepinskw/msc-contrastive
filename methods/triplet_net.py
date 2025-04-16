@@ -1,7 +1,7 @@
 # methods/triplet_net.py
 import torch
 import torch.nn as nn
-from models.resnet_base import get_resnet_encoder # Przykład importu enkodera
+from models.resnet_base import get_resnet_encoder 
 
 class TripletNet(nn.Module):
     """
@@ -15,7 +15,7 @@ class TripletNet(nn.Module):
         """
         super().__init__()
         self.base_encoder = base_encoder_class(pretrained=False)
-        self.embedding_dim = self.base_encoder.output_dim # Przykład
+        self.embedding_dim = self.base_encoder.output_dim 
      
 
 
