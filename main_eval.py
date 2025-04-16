@@ -32,6 +32,55 @@ from losses.triplet import TripletLoss
 
 from torch.utils.tensorboard import SummaryWriter
 
+#--- test classificator
+class MLPClassifier(nn.Module):
+    """
+    Prosty 3-warstwowy klasyfikator MLP (Multi-Layer Perceptron).
+    Linear -> ReLU -> Dropout -> Linear -> ReLU -> Dropout -> Linear (Logits)
+    """
+    def __init__(self, input_dim: int, hidden_dim1: int, hidden_dim2: int, output_dim: int, dropout_prob: float = 0.5):
+        """
+        Args:
+            input_dim (int): Wymiar wejściowy (wyjście enkodera bazowego).
+            hidden_dim1 (int): Wymiar pierwszej warstwy ukrytej.
+            hidden_dim2 (int): Wymiar drugiej warstwy ukrytej.
+            output_dim (int): Wymiar wyjściowy (liczba klas).
+            dropout_prob (float): Prawdopodobieństwo dropoutu.
+        """
+        super().__init__()
+        self.fc1 = nn.Linear(input_dim, hidden_dim1)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.dropout1 = nn.Dropout(p=dropout_prob)
+
+        self.fc2 = nn.Linear(hidden_dim1, hidden_dim2)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.dropout2 = nn.Dropout(p=dropout_prob)
+
+        self.fc3 = nn.Linear(hidden_dim2, output_dim) # Warstwa wyjściowa (logity)
+
+        print(f"Utworzono MLPClassifier: {input_dim} -> {hidden_dim1} -> {hidden_dim2} -> {output_dim} (dropout={dropout_prob})")
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Przepuszcza wektor cech przez MLP.
+
+        Args:
+            x: Wektor cech z enkodera bazowego (kształt: [batch_size, input_dim]).
+
+        Returns:
+            Logity dla każdej klasy (kształt: [batch_size, output_dim]).
+        """
+        x = self.fc1(x)
+        x = self.relu1(x)
+        x = self.dropout1(x)
+
+        x = self.fc2(x)
+        x = self.relu2(x)
+        x = self.dropout2(x)
+
+        x = self.fc3(x) # Ostatnia warstwa zwraca logity
+        return x
+
 # ----------- Argument Parsing -----------
 
 def parse_arguments():
@@ -320,8 +369,29 @@ def main(args):
     encoder_output_dim = encoder.output_dim # Pobierz wymiar z wrappera
 
     # Definicja klasyfikatora liniowego
-    linear_classifier = nn.Linear(encoder_output_dim, args.num_classes).to(device)
-    print(f"Utworzono klasyfikator liniowy: {encoder_output_dim} -> {args.num_classes}")
+    # linear_classifier = nn.Linear(encoder_output_dim, args.num_classes).to(device)
+    # print(f"Utworzono klasyfikator liniowy: {encoder_output_dim} -> {args.num_classes}")
+
+    num_classes = args.num_classes
+
+    # --- Tworzenie Klasyfikatora MLP ---
+    # Określ wymiary warstw ukrytych (można je dodać do argumentów argparse)
+    hidden_dim1 = 1024 # Przykład
+    hidden_dim2 = 512  # Przykład
+    dropout_prob = 0.5 # Przykład
+
+    # Sprawdź, czy wymiary ukryte nie są większe od wejścia/wyjścia, jeśli nie ma sensu
+    # hidden_dim1 = min(hidden_dim1, encoder_output_dim)
+    # hidden_dim2 = min(hidden_dim2, hidden_dim1)
+
+
+    linear_classifier = MLPClassifier( # Zamiast linear_classifier
+        input_dim=encoder_output_dim,
+        hidden_dim1=hidden_dim1,
+        hidden_dim2=hidden_dim2,
+        output_dim=num_classes,
+        dropout_prob=dropout_prob
+    ).to(device)
 
     # Ładowanie danych (treningowych i testowych z etykietami)
     train_loader, test_loader = get_eval_dataloader(args)
