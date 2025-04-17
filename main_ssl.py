@@ -26,8 +26,19 @@ from losses.triplet import TripletLoss
 
 from torch.utils.tensorboard import SummaryWriter
 
+
+from torchvision import transforms, datasets
+
+class TwoCropTransform:
+    """Create two crops of the same image"""
+    def __init__(self, transform):
+        self.transform = transform
+
+    def __call__(self, x):
+        return [self.transform(x), self.transform(x)]
+
 # (Opcjonalnie) Import bardziej zaawansowanych optymalizatorów, np. LARS
-# from torch.optim import LARS
+# from torch.optim import LARS # uzywany w pracy
 
 # ----------- Argument Parsing -----------
 
@@ -139,7 +150,31 @@ def get_dataloader(args):
     }
 
     if args.dataset == 'cifar10':
-        train_loader = get_cifar10_dataloader(root=args.data_dir, train=True, **common_loader_args)
+        mean = (0.4914, 0.4822, 0.4465)
+        std = (0.2023, 0.1994, 0.2010)
+
+        normalize = transforms.Normalize(mean=mean, std=std)
+
+        train_transform = transforms.Compose([
+            transforms.RandomResizedCrop(size=args.image_size, scale=(0.2, 1.)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomApply([
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
+            ], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.ToTensor(),
+            normalize,
+        ])
+        train_dataset = datasets.CIFAR10(root=args.data_dir,
+                                         transform=TwoCropTransform(train_transform),
+                                         download=True)
+        
+        train_sampler = None
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+            num_workers=args.num_workers, pin_memory=True, sampler=train_sampler)
+
+        # train_loader = get_cifar10_dataloader(root=args.data_dir, train=True, **common_loader_args)
         test_loader = get_cifar10_dataloader(root=args.data_dir, train=False, transform_mode='eval', # Użyj eval transform dla test
                                              batch_size=args.batch_size, num_workers=args.num_workers, image_size=args.image_size)
     elif args.dataset == 'svhn':
@@ -209,24 +244,20 @@ def get_optimizer(model, args):
             lr=args.lr,
             weight_decay=args.weight_decay
         )
-    # elif args.optimizer.lower() == 'sgd':
-    #     optimizer = optim.SGD(
+    elif args.optimizer.lower() == 'sgd':
+        optimizer = optim.SGD(
+            model.parameters(),
+            lr=args.lr,
+            momentum=0.9, # Typowa wartość dla SGD
+            weight_decay=args.weight_decay
+        )
+    # elif args.optimizer.lower() == 'lars':
+    #     optimizer = LARS(
     #         model.parameters(),
     #         lr=args.lr,
-    #         momentum=0.9, # Typowa wartość dla SGD
-    #         weight_decay=args.weight_decay
     #     )
-    # elif args.optimizer.lower() == 'lars':
-    #     # LARS jest często zalecany dla SimCLR z dużymi batchami
-    #     # Wymaga zewnętrznej implementacji lub nowszych wersji PyTorch
-    #     try:
-    #         # from torch.optim import LARS # Sprawdź, czy jest dostępny
-    #         # optimizer = LARS(...)
-    #         print("Ostrzeżenie: LARS nie jest standardowo dostępny, używam Adam.")
-    #         optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) # Fallback
-    #     except ImportError:
-    #         print("Ostrzeżenie: LARS nie jest dostępny, używam Adam.")
-    #         optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) # Fallback
+
+
     else:
         raise ValueError(f"Nieznany optymalizator: {args.optimizer}")
 
@@ -271,7 +302,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, args
     total_loss = 0.0
     start_time = time.time()
 
-    for step, batch_data in enumerate(dataloader):
+    for step, (images,labels) in enumerate(dataloader):#for step, batch_data in enumerate(dataloader):
         optimizer.zero_grad() # Wyzeruj gradienty
 
         # Przenieś dane na odpowiednie urządzenie
@@ -303,15 +334,30 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, args
             loss = criterion(emb1, emb2, pair_label)
 
         elif args.method == 'triplet':
-            anchor, positive, negative = batch_data
-            anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
-            # Forward pass dla Triplet (wywołany 3 razy)
-            emb_a = model(anchor)
-            emb_p = model(positive)
-            emb_n = model(negative)
+            images = torch.cat([images[0],images[1]],dim=0)
+            bsz = labels.shape[0]
+            
+            features = model(images) # Forward pass
+            f1,f2 = torch.split(features, [bsz,bsz], dim=0) 
+            features = torch.cat([f1.unsqueeze(1),f2.unsqueeze(1)], dim=1)
+            
+            anchor_batch = f1
+            positive_batch = f2
+            indices = torch.arange(bsz).to(device)
+            shifted_indices = torch.roll(indices, shifts=1, dims=0)
+            negative_batch = f2[shifted_indices]
 
-            # Oblicz stratę TripletLoss
-            loss = criterion(emb_a, emb_p, emb_n)
+            loss= criterion(anchor_batch, positive_batch, negative_batch)
+
+            # anchor, positive, negative = batch_data
+            # anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
+            # # Forward pass dla Triplet (wywołany 3 razy)
+            # emb_a = model(anchor)
+            # emb_p = model(positive)
+            # emb_n = model(negative)
+
+            # # Oblicz stratę TripletLoss
+            # loss = criterion(emb_a, emb_p, emb_n)
 
         else:
             raise ValueError(f"Nieobsługiwana metoda w pętli treningowej: {args.method}")
@@ -358,6 +404,7 @@ def main(args):
     optimizer = get_optimizer(model, args)
     scheduler = get_scheduler(optimizer, args)
     start_epoch = 0 
+    best_loss = float('inf')
     if args.resume:
         if os.path.isfile(args.resume):
             print(f"=> Ładowanie checkpointu '{args.resume}'")
@@ -441,7 +488,7 @@ def main(args):
     print(f"Rozpoczynanie treningu na {args.epochs} epok...")
     start_training_time = time.time()
 
-    best_loss = float('inf')
+    
     
     for epoch in range(start_epoch, args.epochs):
         epoch_start_time = time.time()
