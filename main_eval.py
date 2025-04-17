@@ -313,18 +313,30 @@ def get_eval_dataloader(args):
             transforms.ToTensor(),
             normalize,
         ])
+        test_transform = transforms.Compose([
+                    transforms.ToTensor(),
+                    normalize,
+                ])
+
+
         train_dataset = datasets.CIFAR10(root=args.data_dir,
-                                         transform=TwoCropTransform(train_transform),
+                                         transform=train_transform,
                                          download=True)
+        
+        test_dataset = datasets.CIFAR10(root=args.data_dir,
+                                       train=False,
+                                       transform=test_transform)
+
         
         train_sampler = None
         train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+            train_dataset, batch_size=args.eval_batch_size, shuffle=(train_sampler is None),
             num_workers=args.num_workers, pin_memory=True, sampler=train_sampler)
 
         # train_loader = get_cifar10_dataloader(root=args.data_dir, train=True, **common_loader_args)
-        test_loader = get_cifar10_dataloader(root=args.data_dir, train=False, transform_mode='eval', # Użyj eval transform dla test
-                                             batch_size=256, num_workers=8, image_size=args.image_size)
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=256, shuffle=False,
+            num_workers=8, pin_memory=True)
         # train_loader = get_cifar10_dataloader(root=args.data_dir, train=True, **eval_transform_args_train, **common_loader_args)
         # test_loader = get_cifar10_dataloader(root=args.data_dir, train=False, **eval_transform_args_test, **common_loader_args)
     elif args.dataset == 'svhn':
