@@ -174,13 +174,38 @@ def get_dataloader(args):
             train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
             num_workers=args.num_workers, pin_memory=True, sampler=train_sampler)
 
-        # train_loader = get_cifar10_dataloader(root=args.data_dir, train=True, **common_loader_args)
-        test_loader = get_cifar10_dataloader(root=args.data_dir, train=False, transform_mode='eval', # Użyj eval transform dla test
-                                             batch_size=args.batch_size, num_workers=args.num_workers, image_size=args.image_size)
+        test_loader = None
     elif args.dataset == 'svhn':
-        train_loader = get_svhn_dataloader(root=args.data_dir, split='train', **common_loader_args)
-        test_loader = get_svhn_dataloader(root=args.data_dir, split='test', transform_mode='eval',
-                                            batch_size=args.batch_size, num_workers=args.num_workers, image_size=args.image_size)
+
+        mean = (0.5, 0.5, 0.5)
+        std = (0.5, 0.5, 0.5)
+
+        normalize = transforms.Normalize(mean=mean, std=std)
+
+        train_transform = transforms.Compose([
+            transforms.RandomResizedCrop(size=args.image_size, scale=(0.2, 1.)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomApply([
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
+            ], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.ToTensor(),
+            normalize,
+        ])
+        train_dataset = datasets.SVHN(root=args.data_dir,
+                                         transform=TwoCropTransform(train_transform),
+                                         download=True)
+        
+        train_sampler = None
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+            num_workers=args.num_workers, pin_memory=True, sampler=train_sampler)
+
+        test_loader = None
+
+        # train_loader = get_svhn_dataloader(root=args.data_dir, split='train', **common_loader_args)
+        # test_loader = get_svhn_dataloader(root=args.data_dir, split='test', transform_mode='eval',
+        #                                     batch_size=args.batch_size, num_workers=args.num_workers, image_size=args.image_size)
     elif args.dataset == 'celeba':
         train_loader = get_celeba_dataloader(root=args.data_dir, train=True, target_type='identity', # Użyjmy identity do ew. tworzenia par
                                              download=False, **common_loader_args)
@@ -334,12 +359,13 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, args
             loss = criterion(emb1, emb2, pair_label)
 
         elif args.method == 'triplet':
-            images = torch.cat([images[0],images[1]],dim=0)
+            #unsuprevised
+            images = torch.cat([images[0],images[1]],dim=0).to(device)
             bsz = labels.shape[0]
             
             features = model(images) # Forward pass
-            f1,f2 = torch.split(features, [bsz,bsz], dim=0) 
-            features = torch.cat([f1.unsqueeze(1),f2.unsqueeze(1)], dim=1)
+            f1,f2 = torch.split(features, [bsz,bsz], dim=0)#.to(device)
+            features = torch.cat([f1.unsqueeze(1),f2.unsqueeze(1)], dim=1).to(device)
             
             anchor_batch = f1
             positive_batch = f2
