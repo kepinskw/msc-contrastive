@@ -370,9 +370,12 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, args
             anchor_batch = f1
             positive_batch = f2
             indices = torch.arange(bsz).to(device)
-            shifted_indices = torch.roll(indices, shifts=1, dims=0)
-            negative_batch = f2[shifted_indices]
-
+            # shifted_indices = torch.roll(indices, shifts=1, dims=0)
+            # negative_batch = f2[shifted_indices]
+            random_shifts = torch.randint(1, bsz, (bsz,)).to(device)
+            negative_indices = (indices + random_shifts) % bsz 
+            negative_batch = f2[negative_indices].to(device)
+            loss= criterion(anchor_batch, positive_batch, negative_batch)
             loss= criterion(anchor_batch, positive_batch, negative_batch)
 
             # anchor, positive, negative = batch_data
@@ -462,7 +465,7 @@ def main(args):
                 if 'optimizer_state_dict' in checkpoint and optimizer is not None:
                     try:
                         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                        optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['initial_lr']
+                        optimizer.param_groups[0]['lr'] = args.lr#optimizer.param_groups[0]['initial_lr']
                         print("  Pomyślnie załadowano stan optymalizatora.")
                         # Ważne: Przenieś stan optymalizatora na właściwe urządzenie, jeśli to konieczne
                         for state in optimizer.state.values():
