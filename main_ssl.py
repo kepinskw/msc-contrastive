@@ -367,8 +367,8 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, args
             f1,f2 = torch.split(features, [bsz,bsz], dim=0)#.to(device)
             features = torch.cat([f1.unsqueeze(1),f2.unsqueeze(1)], dim=1).to(device)
             
-            anchor_batch = f1
-            positive_batch = f2
+            anchor_batch = f1.to(device)
+            positive_batch = f2.to(device)
             indices = torch.arange(bsz).to(device)
             # shifted_indices = torch.roll(indices, shifts=1, dims=0)
             # negative_batch = f2[shifted_indices]
