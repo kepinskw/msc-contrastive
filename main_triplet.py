@@ -255,6 +255,75 @@ def get_scheduler(optimizer, args):
 
     return scheduler
 
+# ----------- Semi-Hard batch ---------------
+
+def mine_semi_hard_triplets(embeddings, labels, margin, device=None):
+    """
+    Implementacja Semi-Hard Triplet Mining.
+    Zbiera wszystkie trójki (A, P, N) z paczki, które spełniają kryterium semi-hard.
+
+    Args:
+        embeddings (torch.Tensor): Tensor embeddingów o kształcie (batch_size, embedding_dim).
+        labels (torch.Tensor): Tensor etykiet o kształcie (batch_size).
+        margin (float): Wartość marginesu używana w Triplet Loss.
+        device (torch.device, optional): Urządzenie, na którym mają być tworzone nowe tensory.
+                                         Jeśli None, używane jest urządzenie `embeddings.device`.
+
+    Returns:
+        tuple: (selected_anchor_embeddings, selected_positive_embeddings, selected_negative_embeddings)
+               Tensory zawierające embeddingi dla wybranych trójek semi-hard. Mogą być puste,
+               jeśli nie znaleziono żadnych prawidłowych trójek.
+    """
+    if device is None:
+        device = embeddings.device
+
+    # Oblicz macierz odległości euklidesowych (L2) między wszystkimi parami embeddingów
+    pairwise_dist = torch.cdist(embeddings, embeddings, p=2.0)
+
+    batch_size = embeddings.size(0)
+    embedding_dim = embeddings.size(1)
+
+    # Listy do przechowywania indeksów wybranych trójek
+    anchor_indices_list = []
+    positive_indices_list = []
+    negative_indices_list = []
+
+    for i in range(batch_size):  # Pętla po każdej próbce jako potencjalnej kotwicy (A)
+        anchor_label = labels[i]
+
+        # Pętla po każdej innej próbce jako potencjalnej próbce pozytywnej (P)
+        for j in range(batch_size):
+            if i == j:  # Kotwica i pozytywna muszą być różnymi próbkami
+                continue
+
+            if labels[j] == anchor_label:  # Znaleziono parę (A, P)
+                d_ap = pairwise_dist[i, j] # Odległość Kotwica-Pozytywna
+
+                # Pętla po każdej próbce jako potencjalnej próbce negatywnej (N)
+                for k in range(batch_size):
+                    if labels[k] != anchor_label:  # Próbka N musi mieć inną etykietę niż A
+                        d_an = pairwise_dist[i, k] # Odległość Kotwica-Negatywna
+
+                        # Sprawdź warunek Semi-Hard
+                        is_semi_hard = (d_an > d_ap) and (d_an < d_ap + margin)
+
+                        if is_semi_hard:
+                            anchor_indices_list.append(i)
+                            positive_indices_list.append(j)
+                            negative_indices_list.append(k)
+
+    if not anchor_indices_list:  # Jeśli nie znaleziono żadnych trójek semi-hard
+        return torch.empty(0, embedding_dim, device=device), \
+               torch.empty(0, embedding_dim, device=device), \
+               torch.empty(0, embedding_dim, device=device)
+
+    # Wybierz embeddingi na podstawie znalezionych indeksów
+    selected_anchor_embeddings = embeddings[anchor_indices_list]
+    selected_positive_embeddings = embeddings[positive_indices_list]
+    selected_negative_embeddings = embeddings[negative_indices_list]
+
+    return selected_anchor_embeddings, selected_positive_embeddings, selected_negative_embeddings
+
 # ----------- Main Training Logic -----------
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, args):
@@ -267,20 +336,25 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, args
         optimizer.zero_grad() # Wyzeruj gradienty
         
         # Forward pass dla Triplet (wywołany 3 razy)
-        emb_a = model(anchor)
-        emb_p = model(positive)
-        emb_n = model(negative)
+        # emb_a = model(anchor)
+        # emb_p = model(positive)
+        # emb_n = model(negative)
+        images_batch = images.to(device)
+        labels_bathc = labels.to(device)
+        embeddings = model(images_batch)
 
-        # # Oblicz stratę TripletLoss
-        loss = criterion(emb_a, emb_p, emb_n)
-
+        emb_a, emb_p, emb_n = mine_semi_hard_triplets(embeddings, labels_bathc, args.margin, device=device)
         
-        # Backward pass i krok optymalizatora
-        loss.backward()
-        optimizer.step()
+        # # Oblicz stratę TripletLoss
+        if emb_a.nelement()>0:
+            loss = criterion(emb_a, emb_p, emb_n)
+            # Backward pass i krok optymalizatora
+            loss.backward()
+            optimizer.step()
 
-        total_loss += loss.item()
-
+            total_loss += loss.item()
+        else:
+            loss = torch.tensor(0.0, device=device) # Jeśli nie znaleziono trójek, strata wynosi 0
         # Logowanie
         if (step + 1) % args.log_interval == 0:
             avg_loss = total_loss / (step + 1)
